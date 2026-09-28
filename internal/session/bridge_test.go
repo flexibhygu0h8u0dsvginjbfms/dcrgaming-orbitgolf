@@ -398,6 +398,26 @@ func TestAWholeMatchIsPlayedAndSettledOverABridge(t *testing.T) {
 		}
 	}
 
+	// Once paid, the table lobby shows the match over, not a stake to fund.
+	for i, p := range peers {
+		waitFor(t, fake, peers, "the payout to be seen", func() bool {
+			_ = p.game.Prepare(ctx, tableSID)
+			return p.game.Paid(tableSID)
+		})
+		v, ok := p.game.Lobby(tableSID, uint32(fake.Height()), false)
+		if !ok || !v.Finished || v.Stage != tablelobby.StageReady {
+			t.Fatalf("peer %d: a paid-out table's lobby is at stage %v (finished %v)", i, v.Stage, v.Finished)
+		}
+		for _, s := range v.Seats {
+			if d, ok := s.Deposit(tablelobby.PurposeStake); ok && d.Short() != "paid out" {
+				t.Fatalf("peer %d: a paid-out stake reads %q", i, d.Short())
+			}
+		}
+		if v.NextStep != "Match over · paid out" {
+			t.Fatalf("peer %d: next step %q", i, v.NextStep)
+		}
+	}
+
 	// And the transcript both sides hold audits to the same winner.
 	blob, err := peers[0].game.Transcript(tableSID)
 	if err != nil {

@@ -1281,7 +1281,37 @@ func (g *Game) Lobby(sid string, height uint32, stale bool) (tablelobby.View, bo
 	}
 	terms := rt.Terms(sid)
 	_, _, funded := rt.Funded(sid, seat)
-	return derive(snap, terms, seat, verified, funded, height, stale), true
+	v := derive(snap, terms, seat, verified, funded, height, stale)
+	g.mu.Lock()
+	over, paid := t.play.Done() || t.abandoned, t.paid
+	g.mu.Unlock()
+	if over {
+		finish(&v, paid)
+	}
+	return v, true
+}
+
+// finish shows a table whose match is over as done. Its stakes left escrow in
+// the payout, which the chain then reports as spending, spent or gone, so they
+// read as paid out rather than as unverified or missing.
+func finish(v *tablelobby.View, paid bool) {
+	v.Finished, v.Stage, v.CanFund = true, tablelobby.StageReady, false
+	for i := range v.Seats {
+		for j, d := range v.Seats[i].Deposits {
+			if d.Purpose != tablelobby.PurposeStake {
+				continue
+			}
+			switch d.Check {
+			case tablelobby.CheckSpending, tablelobby.CheckSpent, tablelobby.CheckMissing:
+				need := max(d.RequiredConfirmations, 1)
+				v.Seats[i].Deposits[j] = tablelobby.Deposit{Purpose: d.Purpose, Atoms: d.Atoms, Check: tablelobby.CheckSpent, Local: true, Confirmations: need, RequiredConfirmations: need}
+			}
+		}
+	}
+	v.NextStep, v.NextDetail = "Match over", "Approve the payout in dcrpulse. Both players sign it."
+	if paid {
+		v.NextStep, v.NextDetail = "Match over · paid out", "The payout left escrow. Recover your admission bond in dcrpulse once its lock ends."
+	}
 }
 
 // derive turns a runtime snapshot into the seating view.

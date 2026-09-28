@@ -126,6 +126,8 @@ func (d Deposit) Short() string {
 		// Somebody said this money is down and this peer has not looked.
 		// Saying "verified" here would be repeating a claim as a finding.
 		return "unverified here"
+	case d.Complete() && (d.Check == CheckSpending || d.Check == CheckSpent):
+		return "paid out"
 	case d.Complete():
 		return "verified"
 	case d.Check == CheckConfirming && d.RequiredConfirmations > 0:
@@ -245,6 +247,8 @@ type View struct {
 	// Demo marks a fixture, so a screen can say so and never be mistaken for
 	// a real table.
 	Demo bool
+	// Finished is a table whose match is over: every step is behind it.
+	Finished bool
 	// Stale says the evidence behind this screen is no longer current -
 	// the bridge went away, or the chain height is unknown. Checks made
 	// before a disconnect are not checks made now, so a stale table reports

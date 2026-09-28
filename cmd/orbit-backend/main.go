@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/karamble/dcrgaming-orbitgolf/internal/bridgeconn"
@@ -48,6 +49,10 @@ type app struct {
 	runCtx      context.Context
 	runErr      chan error
 	fundDone    chan struct{}
+	// settling and settled follow the payouts this app has proposed.
+	settling map[string]bool
+	settled  chan settleResult
+	settleWG sync.WaitGroup
 }
 
 func main() {
@@ -91,6 +96,7 @@ func main() {
 func (a *app) close() {
 	if a.stop != nil {
 		a.stop()
+		a.settleWG.Wait()
 		if a.fundDone != nil {
 			<-a.fundDone
 		}
@@ -352,6 +358,7 @@ func (a *app) call(q request) (any, error) {
 				}
 				_ = a.game.Start(ctx, sid)
 			}
+			a.settleFinished(a.runCtx, a.game)
 			if a.sid == "" {
 				t := a.game.Listed()
 				if len(t) > 0 {

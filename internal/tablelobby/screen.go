@@ -67,6 +67,8 @@ func (v View) Screen() Screen {
 	for _, step := range Steps {
 		state := "todo"
 		switch {
+		case v.Finished:
+			state = "done"
 		case s.Closed:
 			// A closed table will not form: nothing on its rail is done or
 			// current, and the screen says why it closed.
@@ -79,6 +81,9 @@ func (v View) Screen() Screen {
 	}
 	for _, seat := range v.Seats {
 		card := ScreenSeat{Name: seat.Name, You: seat.You, Status: seat.StatusAt(v.Stale)}
+		if v.Finished && !v.Stale {
+			card.Status = "match over"
+		}
 		for _, purpose := range []string{PurposeSeatBond, PurposeStake} {
 			d, _ := seat.Deposit(purpose)
 			card.Deposits = append(card.Deposits, ScreenDeposit{

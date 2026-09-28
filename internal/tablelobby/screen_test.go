@@ -66,6 +66,26 @@ func TestScreenSeatsShowOwnSeatAndProgress(t *testing.T) {
 	}
 }
 
+func TestScreenShowsAFinishedMatchDone(t *testing.T) {
+	v := formingView(StageReady)
+	v.Finished = true
+	v.Seats[0].Deposits = append(v.Seats[0].Deposits, Deposit{Purpose: PurposeStake, Check: CheckSpent, Local: true, Confirmations: 1, RequiredConfirmations: 1})
+	s := v.Screen()
+	for _, step := range s.Steps {
+		if step.State != "done" {
+			t.Fatalf("a finished match still has steps ahead: %+v", s.Steps)
+		}
+	}
+	for _, seat := range s.Seats {
+		if seat.Status != "match over" {
+			t.Fatalf("a finished seat says %q", seat.Status)
+		}
+	}
+	if stake := s.Seats[0].Deposits[1]; stake.Short != "paid out" || !stake.Complete {
+		t.Fatalf("a paid-out stake shown as %+v", stake)
+	}
+}
+
 func TestScreenOnStaleEvidenceShowsNothingDone(t *testing.T) {
 	v := formingView(StageStake)
 	v.CanFund = true
