@@ -342,6 +342,10 @@ func TestAWholeMatchIsPlayedAndSettledOverABridge(t *testing.T) {
 		return ready
 	})
 
+	if _, ok := bySeat[0].game.Result(tableSID); ok {
+		t.Fatal("a match not yet played has a result")
+	}
+
 	// Every frame from here to the end of the match should be a move and
 	// nothing else.
 	before := len(fake.Sent())
@@ -415,6 +419,13 @@ func TestAWholeMatchIsPlayedAndSettledOverABridge(t *testing.T) {
 		}
 		if v.NextStep != "Match over · paid out" {
 			t.Fatalf("peer %d: next step %q", i, v.NextStep)
+		}
+		r, ok := p.game.Result(tableSID)
+		if !ok || r.Outcome != "draw" || r.Money != "Your "+tablelobby.DCR(buyIn)+" DCR stake comes back to you." {
+			t.Fatalf("peer %d: a drawn match's result is %+v", i, r)
+		}
+		if r.Payout[1].State != "done" {
+			t.Fatalf("peer %d: a paid match's payout reads %+v", i, r.Payout)
 		}
 	}
 

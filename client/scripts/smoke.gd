@@ -522,6 +522,44 @@ func check_settings() -> void:
 	game.settings.hide()
 	game.on_reply({"method":"config","ok":true,"data":{"host":"127.0.0.1","port":"8443","network":"mainnet","configured":false}})
 
+func check_result_screen() -> void:
+	game.set_process(false)
+	var original: Dictionary=game.state.duplicate(true)
+	# Fixtures only: a real backend reply now would replace them mid-check.
+	game.backend.reply.disconnect(game.on_reply)
+	var rs=game.result_screen
+	var playing_state: Dictionary=original.duplicate(true)
+	playing_state.mode="bridge"
+	playing_state.table="abcdef0123456789"
+	playing_state.can_play=true
+	playing_state.view.Done=false
+	playing_state.view.Seat=0
+	playing_state.view.Results=[]
+	game.playing=true
+	game.apply_state(playing_state)
+	check(not rs.visible,"The result opened while the match was played")
+	var over: Dictionary=playing_state.duplicate(true)
+	over.view.Done=true
+	over.can_play=false
+	over.outcome={"outcome":"won","headline":"YOU WON","score":"5 : 2","money":"You take the pot: 0.00200000 DCR before fees.",
+		"payout":[{"label":"APPROVE","state":"current"},{"label":"BROADCAST","state":"todo"},{"label":"PAID","state":"todo"}],
+		"payoutNote":"Approve the payout in dcrpulse. Both players sign it."}
+	game.apply_state(over)
+	check(rs.visible and not game.scorecard.visible,"A finished bridge match did not open its result")
+	check(rs.headline.text=="YOU WON" and rs.step_states==["current","todo","todo"],"The result was not drawn from its outcome")
+	await capture_polish("result")
+	over.outcome.payout=[{"label":"APPROVE","state":"done"},{"label":"BROADCAST","state":"done"},{"label":"PAID","state":"done"}]
+	over.outcome.payoutNote="Paid out."
+	game.apply_state(over)
+	check(rs.step_states==["done","done","done"] and rs.note.text=="Paid out.","The result did not follow the payout")
+	rs.back_button.pressed.emit()
+	check(not rs.visible and game.lobby.visible and game.dismissed_table=="abcdef0123456789","Back did not leave the result for the lobby")
+	game.backend.reply.connect(game.on_reply)
+	game.dismissed_table=""
+	game.playing=false
+	game.apply_state(original)
+	game.set_process(true)
+
 func run() -> void:
 	game=load("res://main.tscn").instantiate()
 	root.add_child(game)
@@ -567,10 +605,11 @@ func run() -> void:
 	await check_scorecard()
 	await check_table_lobby()
 	await check_settings()
+	await check_result_screen()
 	game.show_lobby()
 	await wait_idle()
 	check(game.cover.visible,"Title artwork not restored")
-	print("ORBIT smoke: cycling charge/pause/release, nine-hole scorecard/live/caps/ties/early wins/modal controls, practice ghost/retry/isolation, cup timing/scoring/replay/reduced motion/course transitions, scenery motion/freeze, preview mesh/power/stale responses, held aiming, charge/reset, nine scenes, shots, replays, table lobby, bridge settings and lobby checked")
+	print("ORBIT smoke: cycling charge/pause/release, nine-hole scorecard/live/caps/ties/early wins/modal controls, practice ghost/retry/isolation, cup timing/scoring/replay/reduced motion/course transitions, scenery motion/freeze, preview mesh/power/stale responses, held aiming, charge/reset, nine scenes, shots, replays, table lobby, bridge settings, match result and lobby checked")
 	game.queue_free()
 	await process_frame
 	quit(1 if failed else 0)

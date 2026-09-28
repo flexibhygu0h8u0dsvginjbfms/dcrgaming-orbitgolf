@@ -5,6 +5,7 @@ const World = preload("res://scripts/world.gd")
 const Trajectory = preload("res://scripts/trajectory.gd")
 const Scorecard = preload("res://scripts/scorecard.gd")
 const TableLobby = preload("res://scripts/table_lobby.gd")
+const ResultScreen = preload("res://scripts/result_screen.gd")
 const CupFinish = preload("res://scripts/cup_finish.gd")
 const MINT := Color("39f3cd")
 const INK := Color("071222")
@@ -21,6 +22,7 @@ var detail: Label
 var score: Label
 var scorecard: Control
 var table_lobby: Control
+var result_screen: Control
 # dismissed_table is a table the player went back from; it opens again only
 # when asked. open_requested is an Open table press waiting for its state.
 var dismissed_table := ""
@@ -414,6 +416,12 @@ func build_ui() -> void:
 	table_lobby=TableLobby.new()
 	ui.add_child(table_lobby)
 	table_lobby.back_requested.connect(close_table_lobby)
+	result_screen=ResultScreen.new()
+	ui.add_child(result_screen)
+	result_screen.back_requested.connect(close_result)
+	result_screen.scorecard_requested.connect(func():
+		result_screen.hide()
+		toggle_scorecard())
 	table_lobby.fund_requested.connect(func():
 		var t: Dictionary=state.get("lobby",{}).get("terms",{})
 		fund_confirm.dialog_text="Stake %s DCR · Bond %s DCR · Refund %d blocks\n\nRequest your stake payment? Approve it in dcrpulse." % [t.get("buyIn",""),t.get("bond",""),int(t.get("refundBlocks",0))]
@@ -526,6 +534,13 @@ func update_table_lobby(data: Dictionary) -> void:
 		open_table_lobby()
 	open_requested=false
 
+# close_result leaves a finished bridge match for the lobby. Its table stays
+# closed there, rather than reopening as a finished table lobby.
+func close_result() -> void:
+	result_screen.hide()
+	dismissed_table=state.get("table","")
+	show_lobby()
+
 func show_lobby() -> void:
 	if not path.is_empty() or busy: return
 	cancel_charge()
@@ -621,6 +636,7 @@ func apply_state(data: Dictionary) -> void:
 	bridge_terms.visible=data.get("connected",false)
 	fund_button.disabled=not data.get("can_fund",false) or data.get("fund_pending",false)
 	update_table_lobby(data)
+	if result_screen.visible and data.has("outcome"): result_screen.update_result(data.outcome)
 	if data.has("seating"):
 		var terms: Dictionary=data.seating.Terms
 		bridge_terms.text="Stake %s DCR · Bond %s DCR · Refund %d blocks\n%s · %s" % [data.amounts.stake,data.amounts.bond,terms.RefundBlocks,data.seating.NextStep,data.seating.NextDetail]
@@ -671,11 +687,16 @@ func apply_state(data: Dictionary) -> void:
 	hud.visible=playing
 	cover.visible=not playing
 	scorecard.update_card(courses,data)
-	if view.Done and data.mode!="practice" and not was_done and not scorecard.visible: toggle_scorecard()
+	if view.Done and data.mode!="practice" and not was_done and not scorecard.visible:
+		if data.mode=="bridge" and data.has("outcome"):
+			result_screen.update_result(data.outcome)
+			result_screen.show()
+		else:
+			toggle_scorecard()
 
 func can_shoot() -> bool:
 	if busy or not path.is_empty() or finish.active or not playing or not state.has("view"): return false
-	if settings.visible or fund_confirm.visible or scorecard.visible or state.view.Done: return false
+	if settings.visible or fund_confirm.visible or scorecard.visible or result_screen.visible or state.view.Done: return false
 	return state.mode!="bridge" or (state.get("can_play",false) and state.view.Seat==state.view.Turn)
 
 func shot_context() -> String:
@@ -921,6 +942,11 @@ func _notification(what: int) -> void:
 # Gameplay keys are consumed before focused buttons can treat Space/arrow keys
 # as UI navigation. Text entry and modal dialogs retain their normal controls.
 func _input(event: InputEvent) -> void:
+	if result_screen.visible:
+		if event is InputEventKey and event.keycode==KEY_ESCAPE and event.pressed:
+			close_result()
+			get_viewport().set_input_as_handled()
+		return
 	if playing and not settings.visible and not fund_confirm.visible and event is InputEventKey and event.keycode==KEY_TAB:
 		if event.pressed and not event.echo: toggle_scorecard()
 		get_viewport().set_input_as_handled()

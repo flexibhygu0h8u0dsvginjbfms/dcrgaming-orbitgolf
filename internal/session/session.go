@@ -1170,6 +1170,20 @@ func (g *Game) notePayout(t *table, snap sdk.TableSnapshot) {
 	}
 }
 
+// Result is how a finished match ended for this seat, and false while it is
+// still being played.
+func (g *Game) Result(sid string) (tablelobby.Result, bool) {
+	v, ok := g.View(sid)
+	if !ok || !v.Done {
+		return tablelobby.Result{}, false
+	}
+	seats := uint32(match.Seats)
+	if rt, err := g.runtime(); err == nil && rt.Terms(sid).Seats > 0 {
+		seats = rt.Terms(sid).Seats
+	}
+	return tablelobby.ResultFor(v.Seat, v.Winner, v.Won, v.Abandoned, v.Score, v.BuyIn, seats, v.StakeCheck, v.Paid), true
+}
+
 // Paid reports that this seat's stake has been spent by the settlement, which
 // is the only evidence available that the payout actually happened.
 func (g *Game) Paid(sid string) bool {

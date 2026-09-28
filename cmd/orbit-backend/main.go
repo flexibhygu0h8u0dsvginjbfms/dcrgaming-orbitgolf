@@ -134,6 +134,9 @@ func (a *app) state() map[string]any {
 	result := map[string]any{"mode": "lobby", "status": a.status, "connected": a.online, "fund_pending": a.fundPending, "course_hash": course.Hash()}
 	if a.game != nil {
 		result["tables"] = a.game.Listed()
+		if r, ok := a.game.Result(a.sid); ok {
+			result["outcome"] = r
+		}
 		// A table shows its seating from the moment its invite is accepted,
 		// before it is seated and playable.
 		if lobby, ok := a.game.Lobby(a.sid, 0, !a.online); ok {
