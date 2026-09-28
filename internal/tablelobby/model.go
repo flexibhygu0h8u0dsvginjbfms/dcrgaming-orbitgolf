@@ -11,7 +11,12 @@
 // where it says so rather than a log nobody is reading.
 package tablelobby
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+
+	"github.com/decred/dcrd/dcrutil/v4"
+)
 
 // Stage is how far a table has got. Being at a stage means that stage is what
 // the table is waiting for.
@@ -258,14 +263,10 @@ func (v View) Progress(d Deposit) float64 {
 	return float64(d.Confirmations) / float64(d.RequiredConfirmations)
 }
 
-// DCR renders atoms exactly. Integers all the way: a float would round
-// somebody's stake.
+// DCR renders atoms with all eight decimals, exact for every amount that can
+// exist.
 func DCR(atoms int64) string {
-	sign := ""
-	if atoms < 0 {
-		sign, atoms = "-", -atoms
-	}
-	return fmt.Sprintf("%s%d.%08d", sign, atoms/1e8, atoms%1e8)
+	return strconv.FormatFloat(dcrutil.Amount(atoms).ToCoin(), 'f', 8, 64)
 }
 
 // BlocksLeft is how long admission stays open, and false once it has closed or

@@ -6,6 +6,7 @@ require (
 	github.com/decred/dcrd/chaincfg/v3 v3.3.0
 	github.com/decred/dcrd/crypto/blake256 v1.1.0
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
+	github.com/decred/dcrd/dcrutil/v4 v4.0.3
 	github.com/decred/dcrd/txscript/v4 v4.1.2
 	github.com/decred/slog v1.2.0
 	github.com/karamble/dcrgaming-sdk v0.0.0
@@ -22,7 +23,6 @@ require (
 	github.com/decred/dcrd/crypto/ripemd160 v1.0.2 // indirect
 	github.com/decred/dcrd/dcrec v1.0.1 // indirect
 	github.com/decred/dcrd/dcrec/edwards/v2 v2.0.4 // indirect
-	github.com/decred/dcrd/dcrutil/v4 v4.0.3 // indirect
 	github.com/decred/dcrd/wire v1.7.2 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.8 // indirect
 	golang.org/x/crypto v0.51.0 // indirect

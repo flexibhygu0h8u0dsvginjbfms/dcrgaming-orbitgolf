@@ -17,6 +17,7 @@ import (
 	"fmt"
 
 	"github.com/decred/dcrd/crypto/blake256"
+	"github.com/decred/dcrd/dcrutil/v4"
 )
 
 // Version is the policy format, covered by the identifier.
@@ -24,7 +25,7 @@ const Version uint16 = 1
 
 // MaxAtoms is Decred's supply ceiling, used only to refuse arithmetic that has
 // already gone wrong somewhere else.
-const MaxAtoms int64 = 21e14
+const MaxAtoms int64 = dcrutil.MaxAmount
 
 var tag = []byte("dcrminigolf/payout/v1")
 
