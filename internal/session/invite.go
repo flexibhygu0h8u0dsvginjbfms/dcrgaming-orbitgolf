@@ -64,5 +64,8 @@ func (g *Game) ResolveInvite(_ context.Context, _ schema.Invite, terms membershi
 	}
 	log.Infof("accepting a table: buy-in %d, bond %d, refund lock %d blocks, admission closes at %d",
 		terms.BuyInAtoms, terms.BondAtoms, terms.CSVBlocks, terms.Until)
+	g.mu.Lock()
+	g.accepted[terms.SID] = true
+	g.mu.Unlock()
 	return terms, nil
 }

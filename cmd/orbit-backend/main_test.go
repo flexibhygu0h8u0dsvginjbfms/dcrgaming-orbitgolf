@@ -81,6 +81,6 @@ func TestLocalIPC(t *testing.T) {
 		t.Fatal("funding without bridge")
 	}
 	if _, err := a.call(request{Method: "connect"}); err == nil {
-		t.Fatal("default mainnet must refuse")
+		t.Fatal("connecting without bridge credentials succeeded")
 	}
 }

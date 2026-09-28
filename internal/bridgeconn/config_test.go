@@ -1,6 +1,7 @@
 package bridgeconn
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -10,8 +11,11 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	sdkconnect "github.com/karamble/dcrgaming-sdk/pkg/gaming/connect"
 )
 
 // pair is a self-signed certificate and its key, in PEM, so Validate is
@@ -135,5 +139,35 @@ func TestMissingSettingsLoadAsDefaults(t *testing.T) {
 	}
 	if got != Defaults() {
 		t.Fatal("a missing file did not load as the defaults")
+	}
+}
+
+func TestBlankCredentialsKeepTheSavedOnes(t *testing.T) {
+	saved := good(t)
+	form := Config{Network: "testnet3", Host: "10.0.0.2", Port: "9443"}
+	got := form.Keep(saved)
+	if got.ClientCert != saved.ClientCert || got.ClientKey != saved.ClientKey || got.BridgeCert != saved.BridgeCert {
+		t.Fatal("a blank credential did not keep the saved one")
+	}
+	if got.Network != "testnet3" || got.Host != "10.0.0.2" || got.Port != "9443" {
+		t.Fatalf("the form's address and network were not kept: %+v", got)
+	}
+	pasted := good(t)
+	if got := pasted.Keep(saved); got.ClientKey != pasted.ClientKey || got.ClientCert != pasted.ClientCert || got.BridgeCert != pasted.BridgeCert {
+		t.Fatal("a pasted credential was replaced by the saved one")
+	}
+}
+
+func TestAFailedConnectionSaysWhy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := good(t)
+	c.Port = "1"
+	_, err := Connect(ctx, c, sdkconnect.Identity{GameID: "dcrminigolf", GameVer: 1})
+	if err == nil {
+		t.Fatal("a connection to a closed port succeeded")
+	}
+	if !strings.Contains(err.Error(), ": ") {
+		t.Fatalf("the failure does not say why: %v", err)
 	}
 }

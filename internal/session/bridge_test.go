@@ -9,6 +9,7 @@ import (
 	"github.com/decred/dcrd/txscript/v4/stdaddr"
 	"github.com/decred/slog"
 	"github.com/karamble/dcrgaming-orbitgolf/internal/session"
+	"github.com/karamble/dcrgaming-orbitgolf/internal/tablelobby"
 	"github.com/karamble/dcrgaming-orbitgolf/pkg/sim"
 	"github.com/karamble/dcrgaming-sdk/pkg/gaming/bridgetest"
 	"github.com/karamble/dcrgaming-sdk/pkg/gaming/connect"
@@ -519,5 +520,54 @@ func TestAMatchSurvivesARestartAgainstTheRealRuntime(t *testing.T) {
 			t.Fatalf("%s sent the same frame again: %.120s", f.GetFrom(), f.GetFrame())
 		}
 		seen[k] = true
+	}
+}
+
+// TestAnAcceptedTableIsShownBeforeItSeats follows a table from its accepted
+// invite, before any seat is drawn: both games list it and can draw its
+// seating, each marking its own seat.
+func TestAnAcceptedTableIsShownBeforeItSeats(t *testing.T) {
+	fake, peers := standTwo(t)
+	waitFor(t, fake, peers, "both games to subscribe", func() bool {
+		return fake.Subscribers() == 2
+	})
+	if n := fake.Ask(&gamingpb.BridgeRequest{
+		RequestId: "r1",
+		Req: &gamingpb.BridgeRequest_AcceptInvite{
+			AcceptInvite: &gamingpb.AcceptInvite{Invite: invite(t), Gcid: tableGCID},
+		},
+	}); n != 2 {
+		t.Fatalf("the invitation reached %d games, want 2", n)
+	}
+	waitFor(t, fake, peers, "both admission bonds to be requested", func() bool {
+		return len(fake.Spends()) >= 2
+	})
+	for i, p := range peers {
+		if len(p.game.Tables()) != 0 {
+			t.Fatalf("peer %d counts a table that is not seated as open", i)
+		}
+		p.game.Watch(context.Background(), []string{tableSID})
+		if got := p.game.Listed(); len(got) != 1 || got[0] != tableSID {
+			t.Fatalf("peer %d does not list the accepted table: %v", i, got)
+		}
+		v, ok := p.game.Lobby(tableSID, uint32(fake.Height()), false)
+		if !ok {
+			t.Fatalf("peer %d has no seating view for the accepted table", i)
+		}
+		if v.Stage == tablelobby.StageClosed || v.Stage == tablelobby.StageReady {
+			t.Fatalf("peer %d: a forming table is at stage %v", i, v.Stage)
+		}
+		mine := 0
+		for _, s := range v.Seats {
+			if s.You {
+				mine++
+			}
+		}
+		if mine != 1 {
+			t.Fatalf("peer %d marks %d seats as its own", i, mine)
+		}
+		if s := v.Screen(); len(s.Steps) != 6 || len(s.Seats) != 2 || s.Terms.BuyIn != tablelobby.DCR(buyIn) {
+			t.Fatalf("peer %d: the table lobby screen is incomplete: %+v", i, s)
+		}
 	}
 }

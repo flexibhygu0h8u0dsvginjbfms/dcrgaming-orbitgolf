@@ -6,7 +6,7 @@ The public brand is ORBIT GOLF; the repository and Go module are
 `github.com/karamble/dcrgaming-orbitgolf`. The bridge game ID remains
 `dcrminigolf`; existing profile locations and signing tags are unchanged.
 
-Playable development prototype. **Mainnet is disabled.** Bridge lifecycle tests
+Playable development prototype. Bridge lifecycle tests
 use the SDK's local test bridge, not real dcrpulse wallets. This is not an
 audited or release-ready wagering game.
 
@@ -105,7 +105,7 @@ the match early; equal scores after nine holes draw. Par is informational.
 
 ## dcrpulse development connection
 
-Register game ID `dcrminigolf`, version 1, in dcrpulse. Use simnet or testnet3.
+Register game ID `dcrminigolf`, version 1, in dcrpulse, on mainnet, testnet3 or simnet.
 Open Bridge settings, select the matching network, and paste the client
 certificate, client private key and bridge certificate. The private key uses a
 separate hidden clipboard-paste control to preserve PEM line breaks. These are

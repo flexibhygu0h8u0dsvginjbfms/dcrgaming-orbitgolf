@@ -4,6 +4,7 @@ const Backend = preload("res://scripts/backend.gd")
 const World = preload("res://scripts/world.gd")
 const Trajectory = preload("res://scripts/trajectory.gd")
 const Scorecard = preload("res://scripts/scorecard.gd")
+const TableLobby = preload("res://scripts/table_lobby.gd")
 const CupFinish = preload("res://scripts/cup_finish.gd")
 const MINT := Color("39f3cd")
 const INK := Color("071222")
@@ -19,6 +20,11 @@ var headline: Label
 var detail: Label
 var score: Label
 var scorecard: Control
+var table_lobby: Control
+# dismissed_table is a table the player went back from; it opens again only
+# when asked. open_requested is an Open table press waiting for its state.
+var dismissed_table := ""
+var open_requested := false
 var notice: Label
 var power: ProgressBar
 var power_label: Label
@@ -97,7 +103,8 @@ var capture_overview := false
 var fund_button: Button
 var bridge_terms: Label
 var fund_confirm: ConfirmationDialog
-var private_key := ""
+var settings_status: Label
+var key_caption: Label
 
 func _ready() -> void:
 	get_window().min_size=Vector2i(1000,700)
@@ -243,7 +250,7 @@ func build_ui() -> void:
 	button("Local two-player match",func(): playing=true;busy=true;backend.send("local_match"),menu)
 	button("Connect dcrpulse bridge",func(): busy=true;backend.send("connect"),menu)
 	button("Bridge settings",func(): settings.show();backend.send("config"),menu)
-	label("DEVELOPMENT BUILD · MAINNET DISABLED",11,Color("ffbe69"),menu)
+	label("DEVELOPMENT BUILD",11,Color("ffbe69"),menu)
 	var helper := label("Practice needs no wallet. Bridge payouts require\nboth players to sign; recovery stays in dcrpulse.",12,Color("92abc2"),menu)
 	helper.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
 	hud=panel(Vector2(24,24),Vector2(325,0),ui)
@@ -303,12 +310,10 @@ func build_ui() -> void:
 	ui.add_child(top)
 	table_select=OptionButton.new()
 	table_select.custom_minimum_size=Vector2(220,40)
-	table_select.item_selected.connect(func(i): playing=true;backend.send("select_table",{"Table":table_select.get_item_text(i)}))
+	table_select.item_selected.connect(func(i): request_table(table_select.get_item_text(i)))
 	top.add_child(table_select)
 	button("Open table",func():
-		if table_select.selected>=0:
-			playing=true
-			backend.send("select_table",{"Table":table_select.get_item_text(table_select.selected)}),top)
+		if table_select.selected>=0: request_table(table_select.get_item_text(table_select.selected)),top)
 	fund_button=button("Fund stake",func():
 		fund_confirm.dialog_text=bridge_terms.text+"\n\nRequest your stake payment? Approve it in dcrpulse."
 		fund_confirm.popup_centered(Vector2i(600,230)),top)
@@ -351,8 +356,7 @@ func build_ui() -> void:
 	settings_close.tooltip_text="Close bridge settings (Esc)"
 	label("Register game ID dcrminigolf in dcrpulse. No wallet keys belong here.",13,Color.WHITE,form)
 	network=OptionButton.new()
-	network.add_item("simnet")
-	network.add_item("testnet3")
+	for name_ in ["mainnet","testnet3","simnet"]: network.add_item(name_)
 	form.add_child(network)
 	for title in ["Address","Port","Client certificate PEM","Client private key PEM","Bridge certificate PEM"]:
 		label(title,12,Color("92abc2"),form)
@@ -360,25 +364,32 @@ func build_ui() -> void:
 		if credential_fields.size()<2:
 			field=LineEdit.new()
 			field.text="127.0.0.1" if credential_fields.is_empty() else "8443"
-		elif credential_fields.size()==3:
-			field=LineEdit.new()
-			field.secret=true
-			field.editable=false
-			field.placeholder_text="Use Paste key to preserve PEM line breaks"
 		else:
 			field=TextEdit.new()
-			field.custom_minimum_size.y=65
+			field.custom_minimum_size.y=60
+			field.placeholder_text="Paste from dcrpulse"
 		form.add_child(field)
 		credential_fields.append(field)
 		if credential_fields.size()==4:
-			button("Paste key from clipboard (hidden)",func():
-				private_key=DisplayServer.clipboard_get()
-				credential_fields[3].text="Key pasted" if not private_key.is_empty() else "",form)
+			# The private key is pasted like the others but drawn in no colour.
+			field.custom_minimum_size.y=40
+			field.add_theme_color_override("font_color",Color(0,0,0,0))
+			field.add_theme_color_override("font_selected_color",Color(0,0,0,0))
+			var key_row := HBoxContainer.new()
+			form.add_child(key_row)
+			key_caption=label("Hidden once pasted",12,Color("92abc2"),key_row)
+			key_caption.size_flags_horizontal=Control.SIZE_EXPAND_FILL
+			var key_field := field as TextEdit
+			key_field.text_changed.connect(func(): key_caption.text="Hidden · %d characters" % key_field.text.length() if not key_field.text.is_empty() else "Hidden once pasted")
+			button("Clear key",func(): key_field.text="";key_caption.text="Hidden once pasted",key_row)
 	var row := HBoxContainer.new()
 	form.add_child(row)
 	button("Save credentials",save_config,row,true)
 	button("Disconnect",func(): backend.send("disconnect"),row)
 	button("Close",func(): settings.hide(),row)
+	settings_status=label("",13,Color("ffbc62"),form)
+	settings_status.autowrap_mode=TextServer.AUTOWRAP_WORD_SMART
+	settings_status.custom_minimum_size.x=640
 	var reduced := CheckButton.new()
 	reduced.text="Reduced motion (camera, space, guide and finishes)"
 	reduced.button_pressed=reduced_motion
@@ -400,6 +411,13 @@ func build_ui() -> void:
 	scorecard=Scorecard.new()
 	ui.add_child(scorecard)
 	scorecard.close_requested.connect(close_scorecard)
+	table_lobby=TableLobby.new()
+	ui.add_child(table_lobby)
+	table_lobby.back_requested.connect(close_table_lobby)
+	table_lobby.fund_requested.connect(func():
+		var t: Dictionary=state.get("lobby",{}).get("terms",{})
+		fund_confirm.dialog_text="Stake %s DCR · Bond %s DCR · Refund %d blocks\n\nRequest your stake payment? Approve it in dcrpulse." % [t.get("buyIn",""),t.get("bond",""),int(t.get("refundBlocks",0))]
+		fund_confirm.popup_centered(Vector2i(600,230)))
 
 func save_prefs() -> void:
 	var config := ConfigFile.new()
@@ -408,9 +426,14 @@ func save_prefs() -> void:
 	config.set_value("ui","practice_ghost",ghost_enabled)
 	config.save("user://preferences.cfg")
 
+# settings_config is what the settings form would save. A blank credential
+# keeps the one already saved.
+func settings_config() -> Dictionary:
+	return {"network":network.get_item_text(network.selected),"host":credential_fields[0].text,"port":credential_fields[1].text,"client_certificate":credential_fields[2].text,"client_private_key":credential_fields[3].text,"bridge_certificate":credential_fields[4].text}
+
 func save_config() -> void:
-	var config := {"network":network.get_item_text(network.selected),"host":credential_fields[0].text,"port":credential_fields[1].text,"client_certificate":credential_fields[2].text,"client_private_key":private_key,"bridge_certificate":credential_fields[4].text}
-	backend.send("save_config",{"Config":config})
+	settings_status.text=""
+	backend.send("save_config",{"Config":settings_config()})
 
 func start_practice() -> void:
 	if not ready_to_play: return
@@ -461,6 +484,48 @@ func close_scorecard() -> void:
 	scorecard.hide()
 	scorecard.close_button.release_focus()
 
+# request_table opens a table: its table lobby while it forms, the course once
+# it can be played.
+func request_table(sid: String) -> void:
+	dismissed_table=""
+	open_requested=true
+	backend.send("select_table",{"Table":sid})
+
+func open_table_lobby() -> void:
+	close_scorecard()
+	cover.hide()
+	lobby.hide()
+	hud.hide()
+	table_lobby.show()
+
+func close_table_lobby() -> void:
+	dismissed_table=state.get("table","")
+	table_lobby.hide()
+	playing=false
+	cover.show()
+	lobby.show()
+	hud.hide()
+
+# update_table_lobby follows the selected table: the table lobby opens by
+# itself for a table that is forming, unless the player went back from it or
+# is busy elsewhere, and gives way to the course once the table can be played.
+func update_table_lobby(data: Dictionary) -> void:
+	if data.get("can_play",false):
+		if table_lobby.visible or open_requested:
+			table_lobby.hide()
+			playing=true
+		open_requested=false
+		return
+	if not data.has("lobby"):
+		table_lobby.hide()
+		open_requested=false
+		return
+	table_lobby.update_lobby(data.lobby,data.get("fund_pending",false))
+	var sid: String=data.get("table","")
+	if not table_lobby.visible and (open_requested or (sid!=dismissed_table and not playing)):
+		open_table_lobby()
+	open_requested=false
+
 func show_lobby() -> void:
 	if not path.is_empty() or busy: return
 	cancel_charge()
@@ -498,13 +563,15 @@ func on_reply(message: Dictionary) -> void:
 	if message.get("method","")!="poll": busy=false
 	if not message.ok:
 		notice.text=message.get("error","Backend error")
+		if settings.visible: settings_status.text=notice.text
 		return
 	var data = message.data
 	if data == null:
 		if message.get("method","")=="save_config":
-			private_key=""
 			for i in range(2,5): credential_fields[i].text=""
+			key_caption.text="Hidden once pasted"
 		notice.text="Saved. Connect when ready."
+		settings_status.text=notice.text
 		return
 	if data is String:
 		notice.text="Receipt saved: "+data
@@ -538,7 +605,9 @@ func on_reply(message: Dictionary) -> void:
 	elif data.has("host"):
 		credential_fields[0].text=data.host
 		credential_fields[1].text=data.port
-		network.select(1 if data.network=="testnet3" else 0)
+		for i in network.item_count:
+			if network.get_item_text(i)==data.network: network.select(i)
+		for i in range(2,5): credential_fields[i].placeholder_text="Saved · leave empty to keep" if data.configured else "Paste from dcrpulse"
 		notice.text="Credentials saved" if data.configured else "Paste the three credentials issued by dcrpulse."
 
 func apply_state(data: Dictionary) -> void:
@@ -551,9 +620,10 @@ func apply_state(data: Dictionary) -> void:
 	ui.get_node("BridgeControls").visible=data.get("connected",false)
 	bridge_terms.visible=data.get("connected",false)
 	fund_button.disabled=not data.get("can_fund",false) or data.get("fund_pending",false)
+	update_table_lobby(data)
 	if data.has("seating"):
 		var terms: Dictionary=data.seating.Terms
-		bridge_terms.text="Stake %s DCR · Bond %s DCR · Refund %d blocks\n%s" % [dcr(int(terms.BuyInAtoms)),dcr(int(terms.BondAtoms)),terms.RefundBlocks,data.seating.NextDetail]
+		bridge_terms.text="Stake %s DCR · Bond %s DCR · Refund %d blocks\n%s · %s" % [data.amounts.stake,data.amounts.bond,terms.RefundBlocks,data.seating.NextStep,data.seating.NextDetail]
 	var tables: Array=data.get("tables",[])
 	if table_select.item_count!=tables.size():
 		table_select.clear()
@@ -602,9 +672,6 @@ func apply_state(data: Dictionary) -> void:
 	cover.visible=not playing
 	scorecard.update_card(courses,data)
 	if view.Done and data.mode!="practice" and not was_done and not scorecard.visible: toggle_scorecard()
-
-func dcr(atoms: int) -> String:
-	return "%d.%08d" % [atoms/100000000,atoms%100000000]
 
 func can_shoot() -> bool:
 	if busy or not path.is_empty() or finish.active or not playing or not state.has("view"): return false
@@ -866,6 +933,11 @@ func _input(event: InputEvent) -> void:
 	if settings.visible and event is InputEventKey and event.keycode==KEY_ESCAPE and event.pressed:
 		settings.hide()
 		get_viewport().set_input_as_handled()
+		return
+	if table_lobby.visible and not fund_confirm.visible:
+		if event is InputEventKey and event.keycode==KEY_ESCAPE and event.pressed:
+			close_table_lobby()
+			get_viewport().set_input_as_handled()
 		return
 	if event is InputEventMouseButton and event.button_index==MOUSE_BUTTON_LEFT and not event.pressed and charging and charge_source=="mouse":
 		release_charge()

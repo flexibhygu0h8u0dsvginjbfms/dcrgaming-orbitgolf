@@ -3,6 +3,7 @@ package bridgeconn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/decred/slog"
@@ -32,7 +33,7 @@ func Connect(ctx context.Context, c Config, id sdkconnect.Identity) (*transport.
 	sdkconnect.Stamp(&cfg, id)
 	b, err := transport.Dial(ctx, cfg)
 	if err != nil {
-		return nil, errors.New("Could not open the secure bridge connection.")
+		return nil, because("Could not open the secure bridge connection", err)
 	}
 	if err := Check(ctx, b, c.Network, id.GameID); err != nil {
 		b.Close()
@@ -53,7 +54,7 @@ func Check(ctx context.Context, b *transport.Bridge, network, gameID string) err
 		if strings.Contains(err.Error(), "this game is set up for") {
 			return errors.New("Network mismatch: the bridge must match the network selected in settings.")
 		}
-		return errors.New("Bridge unavailable or authentication refused. Check address, port and certificates.")
+		return because("Bridge unavailable or authentication refused. Check address, port and certificates", err)
 	}
 	if reply.GetGame() != gameID {
 		return errors.New("This bridge credential is not registered for dcrminigolf.")
@@ -62,4 +63,10 @@ func Check(ctx context.Context, b *transport.Bridge, network, gameID string) err
 		return errors.New("Network mismatch: the bridge must match the network selected in settings.")
 	}
 	return nil
+}
+
+// because keeps the plain sentence and adds what actually failed, so an
+// unreachable address reads differently from a refused certificate.
+func because(sentence string, err error) error {
+	return fmt.Errorf("%s: %v", sentence, err)
 }

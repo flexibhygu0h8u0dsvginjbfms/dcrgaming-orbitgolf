@@ -91,6 +91,21 @@ func known(network string) bool {
 	return false
 }
 
+// Keep fills the credentials left blank in c from saved, so changing the
+// address, port or network needs nothing pasted again.
+func (c Config) Keep(saved Config) Config {
+	if c.ClientCert == "" {
+		c.ClientCert = saved.ClientCert
+	}
+	if c.ClientKey == "" {
+		c.ClientKey = saved.ClientKey
+	}
+	if c.BridgeCert == "" {
+		c.BridgeCert = saved.BridgeCert
+	}
+	return c
+}
+
 // Complete reports whether anything has been pasted yet, without judging it.
 // The lobby uses it to tell "not set up" from "set up and refused".
 func (c Config) Complete() bool {

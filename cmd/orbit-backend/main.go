@@ -16,6 +16,7 @@ import (
 	"github.com/karamble/dcrgaming-orbitgolf/internal/bridgeconn"
 	"github.com/karamble/dcrgaming-orbitgolf/internal/match"
 	"github.com/karamble/dcrgaming-orbitgolf/internal/session"
+	"github.com/karamble/dcrgaming-orbitgolf/internal/tablelobby"
 	"github.com/karamble/dcrgaming-orbitgolf/pkg/course"
 	"github.com/karamble/dcrgaming-orbitgolf/pkg/sim"
 	"github.com/karamble/dcrgaming-sdk/pkg/identity"
@@ -126,7 +127,18 @@ func (a *app) state() map[string]any {
 	}
 	result := map[string]any{"mode": "lobby", "status": a.status, "connected": a.online, "fund_pending": a.fundPending, "course_hash": course.Hash()}
 	if a.game != nil {
-		result["tables"] = a.game.Tables()
+		result["tables"] = a.game.Listed()
+		// A table shows its seating from the moment its invite is accepted,
+		// before it is seated and playable.
+		if lobby, ok := a.game.Lobby(a.sid, 0, !a.online); ok {
+			result["seating"] = lobby
+			result["lobby"] = lobby.Screen()
+			result["table"] = a.sid
+			result["amounts"] = map[string]string{
+				"stake": tablelobby.DCR(lobby.Terms.BuyInAtoms),
+				"bond":  tablelobby.DCR(lobby.Terms.BondAtoms),
+			}
+		}
 		if v, ok := a.game.View(a.sid); ok {
 			result["mode"] = "bridge"
 			result["view"] = v
@@ -136,9 +148,6 @@ func (a *app) state() map[string]any {
 			fund, reason := a.game.CanFund(a.sid)
 			result["can_play"] = play && a.online
 			result["can_fund"], result["fund_reason"] = fund && a.online, reason
-			if lobby, ok := a.game.Lobby(a.sid, 0, !a.online); ok {
-				result["seating"] = lobby
-			}
 		}
 	}
 	if a.local != nil {
@@ -255,7 +264,9 @@ func (a *app) call(q request) (any, error) {
 		if q.Config == nil {
 			return nil, fmt.Errorf("missing config")
 		}
-		return nil, bridgeconn.Save(filepath.Join(a.dir, "bridge.json"), *q.Config)
+		path := filepath.Join(a.dir, "bridge.json")
+		saved, _ := bridgeconn.Load(path)
+		return nil, bridgeconn.Save(path, q.Config.Keep(saved))
 	case "connect":
 		if a.rt != nil {
 			return a.state(), nil
@@ -263,9 +274,6 @@ func (a *app) call(q request) (any, error) {
 		c, err := bridgeconn.Load(filepath.Join(a.dir, "bridge.json"))
 		if err != nil {
 			return nil, err
-		}
-		if c.Network == "mainnet" {
-			return nil, fmt.Errorf("mainnet is disabled in this development build; use simnet or testnet3")
 		}
 		g, err := session.New(a.dir)
 		if err != nil {
@@ -330,6 +338,13 @@ func (a *app) call(q request) (any, error) {
 		if a.game != nil && a.online {
 			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
+			if records, err := a.rt.Tables().LoadTables(); err == nil {
+				sids := make([]string, 0, len(records))
+				for _, r := range records {
+					sids = append(sids, r.Match)
+				}
+				a.game.Watch(ctx, sids)
+			}
 			for _, sid := range a.game.Tables() {
 				if err := a.game.Prepare(ctx, sid); err != nil {
 					a.status = err.Error()
@@ -338,7 +353,7 @@ func (a *app) call(q request) (any, error) {
 				_ = a.game.Start(ctx, sid)
 			}
 			if a.sid == "" {
-				t := a.game.Tables()
+				t := a.game.Listed()
 				if len(t) > 0 {
 					a.sid = t[0]
 				}
@@ -349,7 +364,11 @@ func (a *app) call(q request) (any, error) {
 		if a.game == nil {
 			return nil, fmt.Errorf("not connected")
 		}
-		if _, ok := a.game.View(q.Table); !ok {
+		listed := false
+		for _, sid := range a.game.Listed() {
+			listed = listed || sid == q.Table
+		}
+		if !listed {
 			return nil, fmt.Errorf("unknown table")
 		}
 		a.sid = q.Table

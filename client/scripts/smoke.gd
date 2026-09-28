@@ -436,6 +436,92 @@ func check_scorecard() -> void:
 	game.apply_state(original)
 	game.set_process(true)
 
+func lobby_fixture(stage: int, can_fund: bool) -> Dictionary:
+	var labels := ["INVITATION","ADMISSION BOND","ROSTER","SEAT DRAW","STAKE","READY"]
+	var steps: Array = []
+	for i in range(6): steps.append({"label":labels[i],"state":"done" if i<stage else ("current" if i==stage else "todo")})
+	var bond := {"name":"ENTRY","short":"1 of 2","progress":0.5,"complete":false,"wrong":false}
+	var stake := {"name":"STAKE","short":"not posted","progress":0.0,"complete":false,"wrong":false}
+	var no_bond := {"name":"ENTRY","short":"not posted","progress":0.0,"complete":false,"wrong":false}
+	return {"mode":"lobby","connected":true,"status":"","fund_pending":false,"table":"abcdef0123456789","tables":["abcdef0123456789"],
+		"lobby":{"match":"abcdef0123456789","stage":labels[stage],"steps":steps,
+			"seats":[{"name":"You","you":true,"status":"entry confirming · 1 of 2","deposits":[bond,stake]},{"name":"Seat 1","you":false,"status":"waiting for entry","deposits":[no_bond,stake]}],
+			"terms":{"buyIn":"0.00100000","bond":"0.01000000","perSeat":"0.01100000","pot":"0.00200000","refundBlocks":288,"bondBlocks":288,"until":1119075},
+			"nextStep":labels[stage],"nextDetail":"Table formation and payment approvals are managed by dcrpulse.","canFund":can_fund,
+			"closed":false,"closedReason":"","error":"","stale":false}}
+
+func check_table_lobby() -> void:
+	game.set_process(false)
+	var original: Dictionary=game.state.duplicate(true)
+	game.show_lobby()
+	await wait_idle()
+	# Fixtures only: a real backend reply now would replace them mid-check.
+	game.backend.reply.disconnect(game.on_reply)
+	var tl=game.table_lobby
+	var forming := lobby_fixture(1,false)
+	game.apply_state(forming)
+	check(tl.visible and not game.lobby.visible and not game.hud.visible,"An accepted table did not open its table lobby")
+	check(tl.step_states[0]=="done" and tl.step_states[1]=="current" and tl.step_states[2]=="todo","Table lobby rail does not follow the stage")
+	check(tl.seat_cards[0].you.visible and not tl.seat_cards[1].you.visible,"Own seat not marked")
+	check(tl.terms.perSeat.text=="0.01100000 DCR","Table terms not shown")
+	check(tl.fund_button.disabled,"Funding offered before the stake step")
+	await capture_polish("table-lobby")
+	var staking := lobby_fixture(4,true)
+	game.apply_state(staking)
+	check(not tl.fund_button.disabled,"Funding not offered at the stake step")
+	tl.fund_button.pressed.emit()
+	check(game.fund_confirm.visible and game.fund_confirm.dialog_text.contains("0.00100000"),"Stake request did not ask for confirmation with the terms")
+	game.fund_confirm.hide()
+	staking.fund_pending=true
+	game.apply_state(staking)
+	check(tl.fund_button.disabled,"A pending stake request can be sent again")
+	var stale := lobby_fixture(4,false)
+	stale.lobby.stale=true
+	game.apply_state(stale)
+	check(tl.error_label.text.begins_with("Evidence out of date"),"Stale evidence not reported")
+	tl.back_button.pressed.emit()
+	check(not tl.visible and game.lobby.visible,"Back did not return to the lobby")
+	game.apply_state(forming)
+	check(not tl.visible,"A table the player went back from reopened by itself")
+	game.open_requested=true
+	game.apply_state(forming)
+	check(tl.visible,"Open table did not reopen the table lobby")
+	var playable := lobby_fixture(5,false)
+	playable.can_play=true
+	game.apply_state(playable)
+	check(not tl.visible and game.playing,"A playable table did not give way to the course")
+	game.playing=false
+	game.dismissed_table=""
+	game.backend.reply.connect(game.on_reply)
+	game.apply_state(original)
+	game.set_process(true)
+
+func check_settings() -> void:
+	var fields: Array=game.credential_fields
+	check(fields.size()==5,"Bridge settings lost a field")
+	for i in range(2,5):
+		check(fields[i] is TextEdit and fields[i].editable,"A credential cannot be pasted into its own field")
+	var networks: Array=[]
+	for i in game.network.item_count: networks.append(game.network.get_item_text(i))
+	check(networks.has("mainnet"),"Mainnet cannot be chosen")
+	game.on_reply({"method":"config","ok":true,"data":{"host":"95.216.110.66","port":"8443","network":"mainnet","configured":true}})
+	check(game.network.get_item_text(game.network.selected)=="mainnet","A saved mainnet setting was not selected")
+	check(fields[0].text=="95.216.110.66","Saved address not shown")
+	check(fields[3].placeholder_text.contains("keep"),"A saved profile does not say blank keeps the credentials")
+	check(fields[3].get_theme_color("font_color").a==0.0,"The private key is drawn on screen")
+	fields[2].text="CERT"
+	fields[3].text="KEY"
+	fields[4].text="BRIDGE"
+	var config: Dictionary=game.settings_config()
+	check(config.network=="mainnet" and config.client_certificate=="CERT" and config.client_private_key=="KEY" and config.bridge_certificate=="BRIDGE","Settings would not save what was pasted")
+	for i in range(2,5): fields[i].text=""
+	config=game.settings_config()
+	check(config.client_private_key=="" and config.client_certificate=="","Blank credentials were not sent blank")
+	game.settings.show()
+	await capture_polish("bridge-settings")
+	game.settings.hide()
+	game.on_reply({"method":"config","ok":true,"data":{"host":"127.0.0.1","port":"8443","network":"mainnet","configured":false}})
+
 func run() -> void:
 	game=load("res://main.tscn").instantiate()
 	root.add_child(game)
@@ -479,10 +565,12 @@ func run() -> void:
 		await process_frame
 	await check_cup_finish()
 	await check_scorecard()
+	await check_table_lobby()
+	await check_settings()
 	game.show_lobby()
 	await wait_idle()
 	check(game.cover.visible,"Title artwork not restored")
-	print("ORBIT smoke: cycling charge/pause/release, nine-hole scorecard/live/caps/ties/early wins/modal controls, practice ghost/retry/isolation, cup timing/scoring/replay/reduced motion/course transitions, scenery motion/freeze, preview mesh/power/stale responses, held aiming, charge/reset, nine scenes, shots, replays and lobby checked")
+	print("ORBIT smoke: cycling charge/pause/release, nine-hole scorecard/live/caps/ties/early wins/modal controls, practice ghost/retry/isolation, cup timing/scoring/replay/reduced motion/course transitions, scenery motion/freeze, preview mesh/power/stale responses, held aiming, charge/reset, nine scenes, shots, replays, table lobby, bridge settings and lobby checked")
 	game.queue_free()
 	await process_frame
 	quit(1 if failed else 0)

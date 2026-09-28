@@ -156,6 +156,11 @@ type Game struct {
 	mu     sync.Mutex
 	rt     Runtime
 	tables map[string]*table
+	// accepted and forming are tables this peer accepted that are not seated
+	// yet: accepted from the moment the invite's terms pass, forming with the
+	// last snapshot taken of each, for the seating screen.
+	accepted map[string]bool
+	forming  map[string]sdk.TableSnapshot
 	// busy is the single-flight set for per-table jobs.
 	busy map[string]bool
 }
@@ -226,7 +231,7 @@ func New(dir string) (*Game, error) {
 	if dir == "" {
 		return nil, fmt.Errorf("a game needs somewhere durable to keep its signing books")
 	}
-	return &Game{dir: dir, tables: map[string]*table{}}, nil
+	return &Game{dir: dir, tables: map[string]*table{}, accepted: map[string]bool{}, forming: map[string]sdk.TableSnapshot{}}, nil
 }
 
 // Bind attaches the runtime.
@@ -986,6 +991,83 @@ func (g *Game) Tables() []string {
 	return out
 }
 
+// Listed is every table the lobby can show: the seated ones and those still
+// forming.
+func (g *Game) Listed() []string {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	seen := make(map[string]bool, len(g.tables)+len(g.accepted)+len(g.forming))
+	for sid := range g.tables {
+		seen[sid] = true
+	}
+	for sid := range g.accepted {
+		seen[sid] = true
+	}
+	for sid := range g.forming {
+		seen[sid] = true
+	}
+	out := make([]string, 0, len(seen))
+	for sid := range seen {
+		out = append(out, sid)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// Watch refreshes the tables this peer holds that are not seated yet, so the
+// seating screen can follow a table from the moment its invite is accepted.
+// It does chain I/O through the bridge; call it off the draw loop.
+func (g *Game) Watch(ctx context.Context, sids []string) {
+	rt, err := g.runtime()
+	if err != nil {
+		return
+	}
+	forming := map[string]sdk.TableSnapshot{}
+	for _, sid := range sids {
+		g.mu.Lock()
+		_, seated := g.tables[sid]
+		g.mu.Unlock()
+		if seated {
+			continue
+		}
+		snap, err := rt.RefreshDeposits(ctx, sid)
+		if err != nil {
+			if snap, err = rt.Snapshot(sid); err != nil {
+				continue
+			}
+		}
+		// A seated table is opened by Ensure, and a closed one has nothing
+		// left to form.
+		if snap.Phase == "seated" || snap.Record.Aborted || snap.Record.RecoveryOnly {
+			continue
+		}
+		forming[sid] = snap
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.forming = forming
+	for sid := range g.accepted {
+		if _, seated := g.tables[sid]; seated {
+			delete(g.accepted, sid)
+			continue
+		}
+		if _, still := forming[sid]; !still {
+			delete(g.accepted, sid)
+		}
+	}
+}
+
+// ownJoin is this peer's roster position before the seats are drawn: the join
+// that carries its own seat bond.
+func ownJoin(snap sdk.TableSnapshot) uint32 {
+	for i, j := range snap.Record.Joins {
+		if j.BondOutpoint == snap.Record.SeatBond.Outpoint {
+			return uint32(i)
+		}
+	}
+	return 0
+}
+
 // headHex renders a chain head for a status report.
 func headHex(c *movelog.Chain) string {
 	head, _ := c.Head()
@@ -1181,7 +1263,15 @@ func (g *Game) Lobby(sid string, height uint32, stale bool) (tablelobby.View, bo
 	}
 	t, err := g.table(sid)
 	if err != nil {
-		return tablelobby.View{}, false
+		g.mu.Lock()
+		snap, ok := g.forming[sid]
+		g.mu.Unlock()
+		if !ok {
+			if snap, err = rt.Snapshot(sid); err != nil {
+				return tablelobby.View{}, false
+			}
+		}
+		return derive(snap, rt.Terms(sid), ownJoin(snap), false, false, height, stale), true
 	}
 	g.mu.Lock()
 	snap, seen, verified, seat := t.snap, t.seen, t.verified, t.seat
